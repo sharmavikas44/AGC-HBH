@@ -1,0 +1,86 @@
+// Load your AGC_Trend and temperature trend rasters
+var agcTrend = ee.Image('projects/betula123/assets/AGC_Trend');
+var speiTrend = ee.Image('projects/betula123/assets/Soil_pH_ROI');
+
+// Define your area of interest (HBH)
+var aoi = ee.FeatureCollection('projects/betula123/assets/HBH');
+
+// Clip the images to the area of interest
+agcTrend = agcTrend.clip(aoi);
+speiTrend = speiTrend.clip(aoi);
+
+// Sample the images to get the values (random sampling)
+var agcValues = agcTrend.addBands(speiTrend).sample({
+  region: aoi,
+  scale: 5000, // Use a smaller scale for sampling
+  numPixels: 2000,  // Reduce the number of random samples to extract
+  geometries: true
+});
+
+// Map over the sample collection to create a feature collection with AGC and Temperature Trend values
+var combinedValues = agcValues.map(function(feature) {
+  return feature.select(['b1', 'b1_1'], ['AGC_Trend', 'spei_Trend']);
+});
+
+// Export the combined values to Google Drive as a CSV
+Export.table.toDrive({
+  collection: combinedValues,
+  description: 'AGC_Trend_vs_SPEI_Trend',
+  fileFormat: 'CSV'
+});
+
+// Calculate linear fit (trend line) for the data
+var regression = combinedValues.reduceColumns({
+  reducer: ee.Reducer.linearFit(),
+  selectors: ['spei_Trend', 'AGC_Trend']
+});
+var slope = regression.get('scale');
+var intercept = regression.get('offset');
+
+// Create scatter plot with correlation trend line
+var chart = ui.Chart.feature.byFeature({
+  features: combinedValues,
+  xProperty: 'spei_Trend',
+  yProperties: ['AGC_Trend']
+}).setChartType('ScatterChart')
+  .setOptions({
+    title: 'Scatter Plot: Sm Trend vs AGC Trend with Trend Line',
+    hAxis: {
+      title: 'SPEI Trend',
+      gridlines: {color: 'transparent'},
+      baseline: 0, // Only show the zero line
+      baselineColor: 'black' // Color of the zero line
+    },
+    vAxis: {
+      title: 'AGC Trend',
+      gridlines: {color: 'transparent'},
+      baseline: 0, // Only show the zero line
+      baselineColor: 'black' // Color of the zero line
+    },
+    pointSize: 1,
+    colors: ['blue'],
+    chartArea: {
+      backgroundColor: {
+        stroke: '#cccccc',  // Light border color
+        strokeWidth: 1  // Border width
+      }
+    },
+    trendlines: {
+      0: {
+        type: 'linear',
+        color: 'red',
+        lineWidth: 2,
+        opacity: 0.5,
+        showR2: true,
+        visibleInLegend: true
+      }
+    }
+  });
+
+// Display scatter plot
+print(chart);
+
+// Display the raster layers on the map
+Map.centerObject(aoi, 10);
+Map.addLayer(agcTrend, {min: -1, max: 1, palette: ['blue', 'white', 'red']}, 'AGC Trend');
+Map.addLayer(speiTrend, {min: -1, max: 1, palette: ['blue', 'white', 'red']}, 'SPEI Trend');
