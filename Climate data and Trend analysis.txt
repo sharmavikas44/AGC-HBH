@@ -1,0 +1,137 @@
+## Develop polynomial regression models
+labs(title = "Polynomial Regression", x = "NDVI", y = "AGC")
+
+// Load the AOI (Area of Interest) for HBH
+var aoi = ee.FeatureCollection('projects/betula123/assets/HBH');
+// Define the time range
+var startYear = 2003;
+var endYear = 2023;
+// Function to compute annual data
+function computeAnnualData(year) {
+  var startDate = ee.Date.fromYMD(year, 1, 1);
+  var endDate = ee.Date.fromYMD(year, 12, 31);
+  // Mean Temperature: Average of max and min temperature
+  var maxTemp = ee.ImageCollection('IDAHO_EPSCOR/TERRACLIMATE')
+                   .select('tmmx')
+                   .filterDate(startDate, endDate)
+                   .mean();
+  var minTemp = ee.ImageCollection('IDAHO_EPSCOR/TERRACLIMATE')
+                   .select('tmmn')
+                   .filterDate(startDate, endDate)
+                   .mean();
+  var meanTemp = maxTemp.add(minTemp).divide(2).rename('Mean_Temperature');
+  // Annual Precipitation: Sum over the year
+  var annualPrecip = ee.ImageCollection('IDAHO_EPSCOR/TERRACLIMATE')
+                        .select('pr')
+                        .filterDate(startDate, endDate)
+                        .sum()
+                        .rename('Annual_Precipitation');
+  // SPEI: (Precipitation - PET)
+  var precip = ee.ImageCollection('IDAHO_EPSCOR/TERRACLIMATE')
+                   .select('pr')
+                   .filterDate(startDate, endDate)
+                   .sum();
+  var pet = ee.ImageCollection('IDAHO_EPSCOR/TERRACLIMATE')
+                .select('pet')
+                .filterDate(startDate, endDate)
+                .sum();
+  var spei = precip.subtract(pet).rename('SPEI');
+  // Soil Moisture: Mean over the year
+  var soilMoisture = ee.ImageCollection('IDAHO_EPSCOR/TERRACLIMATE')
+                        .select('soil')
+                        .filterDate(startDate, endDate)
+                        .mean()
+                        .rename('Soil_Moisture');
+  // VPD: Mean over the year
+  var vpd = ee.ImageCollection('IDAHO_EPSCOR/TERRACLIMATE')
+              .select('vpd')
+              .filterDate(startDate, endDate)
+              .mean()
+              .rename('VPD');
+  // Convert year to a single-band image with integer type
+  var yearImage = ee.Image.constant(year).rename('year').toInt16();
+
+  return meanTemp.addBands(annualPrecip).addBands(spei).addBands(soilMoisture).addBands(vpd)
+                 .addBands(yearImage)  // Add year band for trend calculation
+                 .set('year', year);
+}
+// Generate annual images for each year from 2003 to 2023
+var years = ee.List.sequence(startYear, endYear);
+
+var annualImages = years.map(function(y) {
+  return computeAnnualData(ee.Number(y));
+});
+// Convert list into an ImageCollection
+var annualCollection = ee.ImageCollection(annualImages);
+
+print('Annual Climate Data (2003-2023):', annualCollection);
+// Function to compute Mann-Kendall trend
+function computeMannKendall(variable) {
+  var timeSeries = annualCollection.select(variable)
+                    .map(function(image) {
+                      var year = ee.Number(image.get('year'));
+                      var yearBand = ee.Image.constant(year).rename('year').toInt16();
+                      return image.addBands(yearBand);
+                    });
+  // Compute Mann-Kendall trend
+  var mkTrend = timeSeries.reduce(ee.Reducer.linearFit()).select('scale').rename(variable + '_MK_Trend');
+  return mkTrend.clip(aoi);
+}
+// Compute MK trends for each variable
+var tempMK = computeMannKendall('Mean_Temperature');
+var precipMK = computeMannKendall('Annual_Precipitation');
+var speiMK = computeMannKendall('SPEI');
+var soilMK = computeMannKendall('Soil_Moisture');
+var vpdMK = computeMannKendall('VPD');
+// Visualize Mann-Kendall trend on map
+var visParams = { min: -0.1, max: 0.1, palette: ['blue', 'white', 'red'] };
+Map.centerObject(aoi, 6);
+Map.addLayer(tempMK, visParams, 'Mean Temperature MK Trend');
+Map.addLayer(precipMK, visParams, 'Precipitation MK Trend');
+Map.addLayer(speiMK, visParams, 'SPEI MK Trend');
+Map.addLayer(soilMK, visParams, 'Soil Moisture MK Trend');
+Map.addLayer(vpdMK, visParams, 'VPD MK Trend');
+// Export each variable's trend as a separate GeoTIFF
+Export.image.toDrive({
+  image: tempMK,
+  description: 'Temperature_MK_Trend_2003_2023',
+  scale: 5000,
+  region: aoi.geometry(),
+  fileFormat: 'GeoTIFF',
+  maxPixels: 1e13
+});
+Export.image.toDrive({
+  image: precipMK,
+  description: 'Precipitation_MK_Trend_2003_2023',
+  scale: 5000,
+  region: aoi.geometry(),
+  fileFormat: 'GeoTIFF',
+  maxPixels: 1e13
+});
+Export.image.toDrive({
+  image: speiMK,
+  description: 'SPEI_MK_Trend_2003_2023',
+  scale: 5000,
+  region: aoi.geometry(),
+  fileFormat: 'GeoTIFF',
+  maxPixels: 1e13
+});
+Export.image.toDrive({
+  image: soilMK,
+  description: 'Soil_Moisture_MK_Trend_2003_2023',
+  scale: 5000,
+  region: aoi.geometry(),
+  fileFormat: 'GeoTIFF',
+  maxPixels: 1e13
+});
+Export.image.toDrive({
+  image: vpdMK,
+  description: 'VPD_MK_Trend_2003_2023',
+  scale: 5000,
+  region: aoi.geometry(),
+  fileFormat: 'GeoTIFF',
+  maxPixels: 1e13
+});
+
+
+ 
