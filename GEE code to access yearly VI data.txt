@@ -1,0 +1,63 @@
+########################################################
+### GEE codes to access annual Vegetation index data ###
+########################################################
+// Load HBH Region
+var hbh = ee.FeatureCollection("projects/betula123/assets/HBH");
+
+// Load MODIS NDVI & EVI (MOD13Q1 for 2003)
+var mod13 = ee.ImageCollection("MODIS/006/MOD13Q1")
+              .filterBounds(hbh)
+              .filterDate("2003-01-01", "2003-12-31")
+              .mean()
+              .clip(hbh);
+
+var ndvi = mod13.select("NDVI").multiply(0.0001).rename("NDVI");
+var evi = mod13.select("EVI").multiply(0.0001).rename("EVI");
+
+// Compute SAVI Using MOD09A1 Surface Reflectance
+var mod09 = ee.ImageCollection("MODIS/006/MOD09A1")
+              .filterBounds(hbh)
+              .filterDate("2003-01-01", "2003-12-31")
+              .mean()
+              .clip(hbh);
+
+var nir = mod09.select("sur_refl_b02").multiply(0.0001);
+var red = mod09.select("sur_refl_b01").multiply(0.0001);
+var L = 0.5; // Soil adjustment factor
+
+var savi = nir.subtract(red)
+              .multiply(1 + L)
+              .divide(nir.add(red).add(L))
+              .rename("SAVI");
+
+// Load LAI from MOD15A2H
+var lai = ee.ImageCollection("MODIS/006/MCD15A3H")
+             .select("Lai")
+             .filterBounds(hbh)
+             .filterDate("2003-01-01", "2003-12-31")
+             .mean()
+             .multiply(0.1)
+             .rename("LAI")
+             .clip(hbh);
+
+// Combine All Indices
+var combined = ndvi.addBands(evi).addBands(savi).addBands(lai);
+
+// Export Data as tif
+Export.image.toDrive({
+  image: combined,
+  description: "MODIS_VIs_HBH_2003",
+  folder: "EarthEngine",
+  fileNamePrefix: "MODIS_NDVI_EVI_SAVI_LAI_2003",
+  region: hbh.geometry(),
+  scale: 250,
+  fileFormat: "GeoTIFF",
+  maxPixels: 1e13
+});
+
+// Visualization
+Map.centerObject(hbh, 6);
+Map.addLayer(ndvi, {min: 0, max: 1, palette: ["yellow", "green"]}, "NDVI");
+Map.addLayer(evi, {min: 0, max: 1, palette: ["purple", "blue"]}, "EVI");
+Map.addLayer(savi, {min: 0, max: 1, palette: ["white", "orange"]}, "SAVI");
+Map.addLayer(lai, {min: 0, max: 8, palette: ["white", "darkgreen"]}, "LAI");

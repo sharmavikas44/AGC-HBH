@@ -1,0 +1,86 @@
+#################################################################
+## GEE codes for sample file preparation for model development ##
+#################################################################
+// 1. Load Nepal boundary
+var nepal = ee.FeatureCollection('USDOS/LSIB_SIMPLE/2017')
+               .filter(ee.Filter.eq('country_na', 'Nepal'));
+
+// 2. Load and clip AGC image to Nepal
+var agbImage = ee.Image('projects/betula123/assets/N40E060_agb_err')  // replace with your asset ID
+             .clip(nepal);
+Map.addLayer(agbImage, {min: 0, max: 200, palette: ['white', 'red']}, 'AGB');
+
+// Define a conversion factor (typically between 0.45 to 0.50)
+var conversionFactor = 0.47; // Adjust based on your study
+
+// Convert AGB to AGC
+var agc = agbImage.multiply(conversionFactor).rename("AGC");
+Map.addLayer(agc, {min: 0, max: 200, palette: ['white', 'red']}, 'AGC');
+
+// 3. Load and clip NDVI and EVI from MOD13Q1
+var mod13 = ee.ImageCollection("MODIS/006/MOD13Q1")
+              .filterBounds(nepal)
+              .filterDate('2010-01-01', '2010-12-31')
+              .mean()
+              .clip(nepal);
+
+var ndvi = mod13.select("NDVI").multiply(0.0001);
+var evi = mod13.select("EVI").multiply(0.0001);
+
+// 4. Compute SAVI from MOD09A1 surface reflectance
+var mod09 = ee.ImageCollection("MODIS/006/MOD09A1")
+              .filterBounds(nepal)
+              .filterDate('2010-01-01', '2010-12-31')
+              .mean()
+              .clip(nepal);
+
+var nir = mod09.select("sur_refl_b02").multiply(0.0001);  // NIR
+var red = mod09.select("sur_refl_b01").multiply(0.0001);  // RED
+var L = 0.5;  // soil brightness correction factor
+
+var savi = nir.subtract(red)
+              .multiply(1 + L)
+              .divide(nir.add(red).add(L))
+              .rename("SAVI");
+
+// 5. Load and clip LAI from MOD15A2H
+var lai = ee.ImageCollection("MODIS/006/MCD15A3H")
+             .select("Lai")
+             .filterBounds(nepal)
+             .filterDate('2010-01-01', '2010-12-31')
+             .mean()
+             .multiply(0.1)  // scale factor
+             .rename("LAI")
+             .clip(nepal);
+
+// 6. Combine AGC and all indices
+var combined = agc
+  .addBands(ndvi.rename("NDVI"))
+  .addBands(evi.rename("EVI"))
+  .addBands(savi)
+  .addBands(lai);
+
+// 7. Sample points
+var samplePoints = combined.sample({
+  region: nepal.geometry(),
+  scale: 250,
+  numPixels: 5000,
+  geometries: true
+});
+
+// 8. Visualization
+Map.centerObject(nepal, 7);
+Map.addLayer(agc, {min: 0, max: 150, palette: ['white', 'red']}, 'AGC');
+Map.addLayer(ndvi, {min: 0, max: 1, palette: ['yellow', 'green']}, 'NDVI');
+Map.addLayer(evi, {min: 0, max: 1, palette: ['purple', 'blue']}, 'EVI');
+Map.addLayer(lai, {min: 0, max: 8, palette: ['white', 'darkgreen']}, 'LAI');
+Map.addLayer(savi, {min: 0, max: 1, palette: ['white', 'orange']}, 'SAVI');
+
+// 9. Export
+Export.table.toDrive({
+  collection: samplePoints,
+  description: 'NDVI_EVI_SAVI_LAI_AGC_Sample_Nepal',
+  fileFormat: 'CSV'
+});
+
+
